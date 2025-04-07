@@ -9,6 +9,15 @@ struct LoginView: View {
     @State private var showAlert = false
     @State private var rememberMe = false
     
+    // Animation states
+    @State private var logoOffset: CGFloat = -100
+    @State private var formOpacity: Double = 0
+    @State private var buttonOffset: CGFloat = 100
+    
+    // User defaults for remembering email
+    @AppStorage("lastLoggedInEmail") private var lastLoggedInEmail: String = ""
+    @AppStorage("userFirstName") private var userFirstName: String = ""
+    
     var body: some View {
         ZStack {
             // Clean white background
@@ -22,14 +31,27 @@ struct LoginView: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 60, height: 60)
                         .foregroundColor(.blue)
+                        .offset(y: logoOffset)
                     
                     Text("Medi")
                         .font(.system(size: 32, weight: .bold, design: .rounded))
                         .foregroundColor(.blue)
+                        .offset(y: logoOffset)
                     
                     Text("Secure Drug Authentication")
                         .font(.subheadline)
                         .foregroundColor(.gray)
+                        .offset(y: logoOffset)
+                    
+                    // Welcome back message - shows only if we have user's name stored
+                    if !userFirstName.isEmpty {
+                        Text("Welcome back, \(userFirstName)!")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                            .foregroundColor(.blue.opacity(0.8))
+                            .padding(.top, 8)
+                            .offset(y: logoOffset)
+                    }
                 }
                 .padding(.top, 60)
                 .padding(.bottom, 40)
@@ -49,6 +71,7 @@ struct LoginView: View {
                             systemImage: "envelope.fill"
                         )
                     }
+                    .opacity(formOpacity)
                     
                     // Password field
                     VStack(alignment: .leading, spacing: 8) {
@@ -63,6 +86,7 @@ struct LoginView: View {
                             systemImage: "lock.fill"
                         )
                     }
+                    .opacity(formOpacity)
                     
                     // Remember me and forgot password
                     HStack {
@@ -79,6 +103,7 @@ struct LoginView: View {
                         .foregroundColor(.blue)
                     }
                     .padding(.top, 4)
+                    .opacity(formOpacity)
                     
                     // Error message
                     if !authService.errorMessage.isEmpty {
@@ -87,6 +112,7 @@ struct LoginView: View {
                             .font(.caption)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 4)
+                            .opacity(formOpacity)
                     }
                     
                     // Login button
@@ -108,6 +134,7 @@ struct LoginView: View {
                     }
                     .disabled(isLoading)
                     .padding(.top, 8)
+                    .offset(y: buttonOffset)
                     
                     // Or divider
                     HStack {
@@ -125,10 +152,13 @@ struct LoginView: View {
                             .frame(height: 1)
                     }
                     .padding(.vertical, 16)
+                    .opacity(formOpacity)
                     
                     // Sign up link
                     Button(action: {
-                        showSignUp = true
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                            showSignUp = true
+                        }
                     }) {
                         HStack(spacing: 4) {
                             Text("Don't have an account?")
@@ -140,10 +170,30 @@ struct LoginView: View {
                         }
                         .font(.subheadline)
                     }
+                    .opacity(formOpacity)
                 }
                 .padding(.horizontal, 24)
                 
                 Spacer()
+            }
+        }
+        .onAppear {
+            // Set email field if we have stored it
+            if !lastLoggedInEmail.isEmpty && email.isEmpty {
+                email = lastLoggedInEmail
+            }
+            
+            // Run animations when the view appears
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.1)) {
+                logoOffset = 0
+            }
+            
+            withAnimation(.easeInOut(duration: 0.6).delay(0.4)) {
+                formOpacity = 1
+            }
+            
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8).delay(0.7)) {
+                buttonOffset = 0
             }
         }
         .fullScreenCover(isPresented: $showSignUp) {
@@ -166,18 +216,32 @@ struct LoginView: View {
             return
         }
         
-        isLoading = true
+        // Save email if remember me is enabled
+        if rememberMe {
+            lastLoggedInEmail = email
+        }
+        
+        withAnimation {
+            isLoading = true
+        }
         
         Task {
             do {
                 try await authService.signIn(email: email, password: password)
+                // If login successful, store the user's first name
+                if let user = authService.user, !user.fullName.isEmpty {
+                    let firstName = user.fullName.components(separatedBy: " ").first ?? user.fullName
+                    userFirstName = firstName
+                }
             } catch {
                 // Error is already handled in AuthService
                 print("Login failed: \(error.localizedDescription)")
             }
             
             DispatchQueue.main.async {
-                self.isLoading = false
+                withAnimation {
+                    self.isLoading = false
+                }
             }
         }
     }
@@ -200,12 +264,27 @@ struct MinimalTextField: View {
                 .keyboardType(.emailAddress)
                 .disableAutocorrection(true)
                 .font(.body)
+            
+            // Show checkmark for valid email
+            if isValidEmail(text) && !text.isEmpty {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
+                    .transition(.scale.combined(with: .opacity))
+            }
         }
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemGray6))
         )
+        .animation(.easeInOut(duration: 0.2), value: text)
+    }
+    
+    // Email validation
+    private func isValidEmail(_ email: String) -> Bool {
+        let emailRegEx = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
+        let emailPred = NSPredicate(format:"SELF MATCHES %@", emailRegEx)
+        return emailPred.evaluate(with: email)
     }
 }
 
@@ -234,7 +313,9 @@ struct MinimalSecureField: View {
             }
             
             Button(action: {
-                isVisible.toggle()
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isVisible.toggle()
+                }
             }) {
                 Image(systemName: isVisible ? "eye.slash.fill" : "eye.fill")
                     .foregroundColor(.gray)
@@ -256,7 +337,9 @@ struct MinimalCheckboxStyle: ToggleStyle {
                 .frame(width: 18, height: 18)
                 .foregroundColor(configuration.isOn ? .blue : .gray)
                 .onTapGesture {
-                    configuration.isOn.toggle()
+                    withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+                        configuration.isOn.toggle()
+                    }
                 }
             
             configuration.label
