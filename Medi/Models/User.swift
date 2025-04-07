@@ -13,12 +13,14 @@ struct User: Identifiable, Codable {
     var fullName: String
     var phoneNumber: String
     var userType: UserType
+    var isEmailVerified: Bool
     
-    init(id: String = UUID().uuidString, email: String, fullName: String, phoneNumber: String, userType: UserType) {
+    init(id: String = UUID().uuidString, email: String, fullName: String, phoneNumber: String, userType: UserType, isEmailVerified: Bool = false) {
         self.id = id
         self.email = email
         self.fullName = fullName
         self.phoneNumber = phoneNumber
         self.userType = userType
+        self.isEmailVerified = isEmailVerified
     }
 } 

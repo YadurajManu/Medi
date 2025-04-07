@@ -6,6 +6,9 @@ struct ConsumerDashboard: View {
     var body: some View {
         NavigationView {
             VStack {
+                // Email verification banner
+                EmailVerificationBanner()
+                
                 Text("Welcome, \(authService.user?.fullName ?? "Consumer")")
                     .font(.title)
                     .padding()
@@ -33,6 +36,12 @@ struct ConsumerDashboard: View {
                 }
             }
             .navigationTitle("Consumer Dashboard")
+            .onAppear {
+                // Check email verification status when dashboard appears
+                Task {
+                    let _ = await authService.checkEmailVerificationStatus()
+                }
+            }
         }
     }
 } 

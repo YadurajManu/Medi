@@ -6,6 +6,7 @@ struct LoginView: View {
     @State private var password = ""
     @State private var isLoading = false
     @State private var showSignUp = false
+    @State private var showForgotPassword = false
     @State private var showAlert = false
     @State private var rememberMe = false
     
@@ -96,11 +97,15 @@ struct LoginView: View {
                         
                         Spacer()
                         
-                        Button("Forgot Password?") {
-                            // Implement forgot password functionality
+                        Button(action: {
+                            withAnimation {
+                                showForgotPassword = true
+                            }
+                        }) {
+                            Text("Forgot Password?")
+                                .font(.footnote)
+                                .foregroundColor(.blue)
                         }
-                        .font(.footnote)
-                        .foregroundColor(.blue)
                     }
                     .padding(.top, 4)
                     .opacity(formOpacity)
@@ -183,6 +188,9 @@ struct LoginView: View {
                 email = lastLoggedInEmail
             }
             
+            // Reset states
+            authService.isPasswordResetEmailSent = false
+            
             // Run animations when the view appears
             withAnimation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.1)) {
                 logoOffset = 0
@@ -198,6 +206,10 @@ struct LoginView: View {
         }
         .fullScreenCover(isPresented: $showSignUp) {
             SignUpView()
+                .environmentObject(authService)
+        }
+        .sheet(isPresented: $showForgotPassword) {
+            ForgotPasswordView()
                 .environmentObject(authService)
         }
         .alert("Error", isPresented: $showAlert) {

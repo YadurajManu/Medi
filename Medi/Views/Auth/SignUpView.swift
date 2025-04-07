@@ -14,6 +14,7 @@ struct SignUpView: View {
     @State private var showError = false
     @State private var errorMessage = ""
     @State private var acceptedTerms = false
+    @State private var showEmailVerification = false
     
     // Animation states
     @State private var headerOpacity: Double = 0
@@ -243,6 +244,9 @@ struct SignUpView: View {
             }
         }
         .onAppear {
+            // Reset state
+            authService.isVerificationEmailSent = false
+            
             // Staggered animations when the view appears
             withAnimation(.easeOut(duration: 0.5)) {
                 headerOpacity = 1
@@ -265,9 +269,14 @@ struct SignUpView: View {
         } message: {
             Text(errorMessage)
         }
-        .onChange(of: authService.isAuthenticated) { isAuthenticated in
-            if isAuthenticated {
-                dismiss()
+        .fullScreenCover(isPresented: $showEmailVerification) {
+            EmailVerificationView(userEmail: email)
+                .environmentObject(authService)
+        }
+        .onChange(of: authService.isVerificationEmailSent) { isSent in
+            if isSent {
+                // Show email verification screen
+                showEmailVerification = true
             }
         }
     }
@@ -348,11 +357,12 @@ struct SignUpView: View {
                     phoneNumber: phoneNumber,
                     userType: selectedUserType
                 )
-                // Navigation will happen through the onChange handler
                 
                 // Save first name for welcome back message
                 let firstName = fullName.components(separatedBy: " ").first ?? fullName
                 UserDefaults.standard.set(firstName, forKey: "userFirstName")
+                
+                // Email verification will trigger the onChange handler which shows the verification screen
                 
             } catch {
                 errorMessage = error.localizedDescription

@@ -7,6 +7,8 @@ class AuthService: ObservableObject {
     @Published var user: User?
     @Published var isAuthenticated = false
     @Published var errorMessage = ""
+    @Published var isVerificationEmailSent = false
+    @Published var isPasswordResetEmailSent = false
     
     private let auth = Auth.auth()
     private let db = Firestore.firestore()
@@ -55,13 +57,14 @@ class AuthService: ObservableObject {
                     email: data["email"] as? String ?? "",
                     fullName: data["fullName"] as? String ?? "",
                     phoneNumber: data["phoneNumber"] as? String ?? "",
-                    userType: userType
+                    userType: userType,
+                    isEmailVerified: Auth.auth().currentUser?.isEmailVerified ?? false
                 )
                 
                 DispatchQueue.main.async {
                     self.user = userData
                     self.isAuthenticated = true
-                    print("User authenticated: \(userData.fullName) as \(userData.userType)")
+                    print("User authenticated: \(userData.fullName) as \(userData.userType), Email verified: \(userData.isEmailVerified)")
                 }
             } catch {
                 print("Error fetching user data: \(error.localizedDescription)")
@@ -80,7 +83,8 @@ class AuthService: ObservableObject {
                 email: email,
                 fullName: fullName,
                 phoneNumber: phoneNumber,
-                userType: userType
+                userType: userType,
+                isEmailVerified: false
             )
             
             try await db.collection("users").document(user.id).setData([
@@ -89,6 +93,9 @@ class AuthService: ObservableObject {
                 "phoneNumber": user.phoneNumber,
                 "userType": user.userType.rawValue
             ])
+            
+            // Send email verification
+            try await sendEmailVerification()
             
             // No need to set state manually, it will be handled by the listener
             print("User signed up successfully with ID: \(user.id)")
@@ -124,6 +131,59 @@ class AuthService: ObservableObject {
             print("Sign out error: \(error.localizedDescription)")
             DispatchQueue.main.async {
                 self.errorMessage = error.localizedDescription
+            }
+            throw error
+        }
+    }
+    
+    // MARK: - Email Verification
+    
+    func sendEmailVerification() async throws {
+        guard let currentUser = auth.currentUser else {
+            let error = NSError(domain: "com.medi.auth", code: 0, userInfo: [NSLocalizedDescriptionKey: "No user is currently signed in"])
+            DispatchQueue.main.async {
+                self.errorMessage = error.localizedDescription
+            }
+            throw error
+        }
+        
+        do {
+            try await currentUser.sendEmailVerification()
+            DispatchQueue.main.async {
+                self.isVerificationEmailSent = true
+            }
+            print("Verification email sent successfully")
+        } catch {
+            print("Email verification error: \(error.localizedDescription)")
+            DispatchQueue.main.async {
+                self.errorMessage = "Failed to send verification email: \(error.localizedDescription)"
+            }
+            throw error
+        }
+    }
+    
+    func checkEmailVerificationStatus() async -> Bool {
+        guard let currentUser = auth.currentUser else {
+            return false
+        }
+        
+        try? await currentUser.reload()
+        return currentUser.isEmailVerified
+    }
+    
+    // MARK: - Password Reset
+    
+    func sendPasswordResetEmail(email: String) async throws {
+        do {
+            try await auth.sendPasswordReset(withEmail: email)
+            DispatchQueue.main.async {
+                self.isPasswordResetEmailSent = true
+            }
+            print("Password reset email sent successfully to \(email)")
+        } catch {
+            print("Password reset error: \(error.localizedDescription)")
+            DispatchQueue.main.async {
+                self.errorMessage = "Failed to send password reset email: \(error.localizedDescription)"
             }
             throw error
         }
