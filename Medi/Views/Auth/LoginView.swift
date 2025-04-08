@@ -27,12 +27,29 @@ struct LoginView: View {
             VStack(spacing: 0) {
                 // Header with logo
                 VStack(spacing: 16) {
-                    Image(systemName: "pill.fill")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 60, height: 60)
-                        .foregroundColor(.blue)
-                        .offset(y: logoOffset)
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(
+                                gradient: Gradient(colors: [Color.blue.opacity(0.1), Color.purple.opacity(0.1)]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 150, height: 150)
+                            .blur(radius: 2)
+                        
+                        Image("Logo")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 120, height: 120)
+                            .shadow(color: Color.blue.opacity(0.3), radius: 10, x: 0, y: 5)
+                            .rotation3DEffect(
+                                .degrees(logoOffset == 0 ? 0 : -10),
+                                axis: (x: 1, y: 0, z: 0)
+                            )
+                    }
+                    .offset(y: logoOffset)
+                    .scaleEffect(logoOffset == 0 ? 1.0 : 0.8)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.7), value: logoOffset)
                     
                     Text("Medi")
                         .font(.system(size: 32, weight: .bold, design: .rounded))

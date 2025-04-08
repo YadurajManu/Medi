@@ -15,6 +15,7 @@ struct SignUpView: View {
     @State private var errorMessage = ""
     @State private var acceptedTerms = false
     @State private var showEmailVerification = false
+    @State private var showTerms = false
     
     // Animation states
     @State private var headerOpacity: Double = 0
@@ -59,17 +60,45 @@ struct SignUpView: View {
                     .padding(.top, 16)
                     .opacity(headerOpacity)
                     
+                    // Company Logo
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(
+                                gradient: Gradient(colors: [Color.blue.opacity(0.08), Color.purple.opacity(0.08)]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 140, height: 140)
+                            .blur(radius: 2)
+                        
+                        Image("Logo")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 110, height: 110)
+                            .shadow(color: Color.blue.opacity(0.3), radius: 8, x: 0, y: 4)
+                            .rotation3DEffect(
+                                .degrees(headerOpacity == 1.0 ? 0 : -10),
+                                axis: (x: 1, y: 0, z: 0)
+                            )
+                    }
+                    .padding(.top, 8)
+                    .padding(.bottom, 20)
+                    .opacity(headerOpacity)
+                    .scaleEffect(headerOpacity == 1.0 ? 1.0 : 0.8)
+                    .animation(.spring(response: 0.6, dampingFraction: 0.7), value: headerOpacity)
+                    
                     // User Type Selection
                     VStack(alignment: .leading, spacing: 12) {
                         Text("I am a:")
-                            .font(.subheadline)
+                            .font(.headline)
                             .fontWeight(.medium)
                             .foregroundColor(.gray)
+                            .padding(.bottom, 5)
                         
                         LazyVGrid(columns: [
                             GridItem(.flexible()),
                             GridItem(.flexible())
-                        ], spacing: 12) {
+                        ], spacing: 16) {
                             ForEach([UserType.consumer, UserType.companyOwner, UserType.shopOwner, UserType.transportation], id: \.self) { type in
                                 MinimalUserTypeButton(
                                     title: userTypeName(type),
@@ -89,13 +118,22 @@ struct SignUpView: View {
                     .opacity(userTypeOffset == 0 ? 1 : 0)
                     
                     // Registration form
-                    VStack(spacing: 20) {
+                    VStack(spacing: 24) {
+                        // Form section header
+                        Text("Your Information")
+                            .font(.headline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 4)
+                        
                         // Full Name
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Full Name")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.gray)
+                                .padding(.leading, 4)
                             
                             ValidatedTextField(
                                 text: $fullName,
@@ -104,6 +142,7 @@ struct SignUpView: View {
                                 isValid: { !$0.isEmpty && $0.count >= 3 }
                             )
                         }
+                        .padding(.bottom, 4)
                         
                         // Email
                         VStack(alignment: .leading, spacing: 8) {
@@ -111,6 +150,7 @@ struct SignUpView: View {
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.gray)
+                                .padding(.leading, 4)
                             
                             ValidatedTextField(
                                 text: $email,
@@ -119,6 +159,7 @@ struct SignUpView: View {
                                 isValid: isValidEmail(_:)
                             )
                         }
+                        .padding(.bottom, 4)
                         
                         // Phone Number
                         VStack(alignment: .leading, spacing: 8) {
@@ -126,6 +167,7 @@ struct SignUpView: View {
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.gray)
+                                .padding(.leading, 4)
                             
                             ValidatedTextField(
                                 text: $phoneNumber,
@@ -134,6 +176,7 @@ struct SignUpView: View {
                                 isValid: isValidPhoneNumber(_:)
                             )
                         }
+                        .padding(.bottom, 4)
                         
                         // Password with strength meter
                         VStack(alignment: .leading, spacing: 8) {
@@ -141,6 +184,7 @@ struct SignUpView: View {
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.gray)
+                                .padding(.leading, 4)
                             
                             PasswordField(
                                 text: $password,
@@ -152,8 +196,10 @@ struct SignUpView: View {
                                 // Password strength indicator
                                 PasswordStrengthView(password: password)
                                     .transition(.opacity)
+                                    .padding(.horizontal, 4)
                             }
                         }
+                        .padding(.bottom, 4)
                         
                         // Confirm Password
                         VStack(alignment: .leading, spacing: 8) {
@@ -161,6 +207,7 @@ struct SignUpView: View {
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                                 .foregroundColor(.gray)
+                                .padding(.leading, 4)
                             
                             ValidatedPasswordField(
                                 text: $confirmPassword,
@@ -168,26 +215,49 @@ struct SignUpView: View {
                                 systemImage: "lock.fill",
                                 isValid: { $0 == password && !$0.isEmpty }
                             )
+                            
+                            // Show password match indicator
+                            if !confirmPassword.isEmpty {
+                                HStack {
+                                    Image(systemName: confirmPassword == password ? "checkmark" : "xmark")
+                                    Text(confirmPassword == password ? "Passwords match" : "Passwords do not match")
+                                }
+                                .font(.caption)
+                                .foregroundColor(confirmPassword == password ? .green : .red)
+                                .padding(.horizontal, 4)
+                                .padding(.top, 4)
+                            }
                         }
+                        .padding(.bottom, 4)
                         
                         // Terms and conditions
-                        Toggle(isOn: $acceptedTerms) {
-                            HStack {
+                        HStack(alignment: .center, spacing: 8) {
+                            Toggle(isOn: $acceptedTerms) {
+                                EmptyView()
+                            }
+                            .toggleStyle(MinimalCheckboxStyle())
+                            .frame(width: 25, height: 25)
+                            
+                            HStack(spacing: 2) {
                                 Text("I agree to the ")
                                     .foregroundColor(.gray)
+                                    .font(.system(size: 14))
                                 
                                 Button(action: {
                                     // Show terms and conditions
+                                    showTerms = true
                                 }) {
                                     Text("Terms & Conditions")
                                         .foregroundColor(.blue)
                                         .underline()
+                                        .font(.system(size: 14))
                                 }
                             }
-                            .font(.footnote)
+                            
+                            Spacer()
                         }
-                        .toggleStyle(MinimalCheckboxStyle())
-                        .padding(.top, 4)
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
                         
                         // Error message
                         if !errorMessage.isEmpty {
@@ -205,7 +275,7 @@ struct SignUpView: View {
                     // Sign Up Button
                     Button(action: signUp) {
                         ZStack {
-                            RoundedRectangle(cornerRadius: 12)
+                            RoundedRectangle(cornerRadius: 16)
                                 .fill(isFormValid ? Color.blue : Color.blue.opacity(0.4))
                             
                             if isLoading {
@@ -214,13 +284,15 @@ struct SignUpView: View {
                             } else {
                                 Text("Create Account")
                                     .font(.headline)
+                                    .fontWeight(.semibold)
                                     .foregroundColor(.white)
                             }
                         }
-                        .frame(height: 50)
+                        .frame(height: 55)
+                        .shadow(color: isFormValid ? Color.blue.opacity(0.3) : Color.clear, radius: 8, x: 0, y: 4)
                     }
                     .disabled(isLoading || !isFormValid)
-                    .padding(.top, 8)
+                    .padding(.top, 12)
                     .scaleEffect(buttonScale)
                     
                     // Login link
@@ -282,6 +354,11 @@ struct SignUpView: View {
                 showEmailVerification = true
             }
         }
+        .sheet(isPresented: $showTerms) {
+            TermsAndConditionsView(onAccept: {
+                acceptedTerms = true
+            })
+        }
     }
     
     private var isFormValid: Bool {
@@ -316,7 +393,7 @@ struct SignUpView: View {
         case .shopOwner:
             return "bag.fill"
         case .transportation:
-            return "truck.fill"
+            return "shippingbox.fill"
         }
     }
     
@@ -396,7 +473,7 @@ struct ValidatedTextField: View {
     var body: some View {
         HStack {
             Image(systemName: systemImage)
-                .foregroundColor(.gray)
+                .foregroundColor(.blue.opacity(0.7))
                 .frame(width: 24)
             
             TextField(placeholder, text: $text)
@@ -414,7 +491,7 @@ struct ValidatedTextField: View {
         }
         .padding()
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemGray6))
         )
         .animation(.easeInOut(duration: 0.2), value: text)
@@ -431,7 +508,7 @@ struct PasswordField: View {
     var body: some View {
         HStack {
             Image(systemName: systemImage)
-                .foregroundColor(.gray)
+                .foregroundColor(.blue.opacity(0.7))
                 .frame(width: 24)
             
             if isVisible {
@@ -457,7 +534,7 @@ struct PasswordField: View {
         }
         .padding()
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemGray6))
         )
     }
@@ -473,7 +550,7 @@ struct ValidatedPasswordField: View {
     var body: some View {
         HStack {
             Image(systemName: systemImage)
-                .foregroundColor(.gray)
+                .foregroundColor(.blue.opacity(0.7))
                 .frame(width: 24)
             
             if isVisible {
@@ -508,7 +585,7 @@ struct ValidatedPasswordField: View {
         }
         .padding()
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color(.systemGray6))
         )
         .animation(.easeInOut(duration: 0.2), value: text)
@@ -620,20 +697,26 @@ struct MinimalUserTypeButton: View {
     
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
                 Image(systemName: iconName)
-                    .font(.system(size: 22))
+                    .font(.system(size: 24))
+                    .foregroundColor(isSelected ? .white : .blue)
+                    .frame(height: 28)
                 
                 Text(title)
-                    .font(.footnote)
+                    .font(.system(size: 14, weight: .medium))
             }
             .foregroundColor(isSelected ? .white : .blue)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .frame(height: 70)
+            .padding(.vertical, 16)
+            .frame(height: 80)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(isSelected ? Color.blue : Color(.systemGray6))
+                    .shadow(color: isSelected ? Color.blue.opacity(0.3) : Color.black.opacity(0.05), 
+                           radius: isSelected ? 5 : 2, 
+                           x: 0, 
+                           y: isSelected ? 3 : 1)
             )
         }
         .transition(.scale.combined(with: .opacity))
