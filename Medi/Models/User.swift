@@ -5,6 +5,7 @@ enum UserType: String, Codable {
     case consumer
     case companyOwner
     case shopOwner
+    case transportation
 }
 
 struct User: Identifiable, Codable {

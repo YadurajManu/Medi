@@ -1,406 +1,334 @@
 import Foundation
 import FirebaseFirestore
-import FirebaseStorage
-import CoreImage.CIFilterBuiltins
-import UIKit
+import CoreImage
+import SwiftUI
 
 class BlockchainService: ObservableObject {
-    @Published var medicines: [Medicine] = []
-    @Published var blockchainEntries: [BlockchainEntry] = []
+    @Published var blockchain = Blockchain()
     @Published var isLoading = false
-    @Published var errorMessage = ""
-    @Published var successMessage = ""
+    @Published var error: String? = nil
     
     private let db = Firestore.firestore()
-    private let storage = Storage.storage().reference()
     
-    // MARK: - Medicine Management
+    init() {
+        loadBlockchainFromFirebase()
+    }
     
-    func registerMedicine(medicine: Medicine) async throws -> String {
+    // MARK: - Blockchain Operations
+    
+    // Register a new medicine to the blockchain
+    func registerMedicine(drugId: String, batchNumber: String, manufacturerName: String, 
+                         drugName: String, composition: String, manufactureDate: Date,
+                         expiryDate: Date, manufacturingLocation: String, userId: String) async throws -> String {
+        
+        let medicineData = MedicineData(
+            drugId: drugId,
+            batchNumber: batchNumber,
+            manufacturerName: manufacturerName,
+            drugName: drugName,
+            composition: composition,
+            manufactureDate: manufactureDate,
+            expiryDate: expiryDate,
+            manufacturingLocation: manufacturingLocation,
+            currentLocation: manufacturingLocation,
+            currentHolder: userId,
+            handoverHistory: [],
+            qrCodeURL: "",
+            status: .registered
+        )
+        
+        // Add to blockchain
+        let newBlock = blockchain.addBlock(data: medicineData)
+        
+        // Generate QR code
+        let qrCodeURL = try await generateAndStoreQRCode(for: newBlock.id)
+        
+        // Update the block with QR code URL
+        blockchain.updateLastBlockWithQRCode(url: qrCodeURL)
+        
+        // Save to Firebase
+        try await saveBlockchainToFirebase()
+        
+        return qrCodeURL
+    }
+    
+    // Update medicine location and handover information
+    func updateMedicineHandover(blockId: String, fromEntity: String, toEntity: String, 
+                               location: String, notes: String) async throws {
+        guard let index = blockchain.blocks.firstIndex(where: { $0.id == blockId }) else {
+            throw NSError(domain: "com.medi.blockchain", code: 404, 
+                         userInfo: [NSLocalizedDescriptionKey: "Block not found"])
+        }
+        
+        let block = blockchain.blocks[index]
+        var updatedData = block.data
+        
+        // Create handover record
+        let handover = HandoverRecord(
+            fromEntity: fromEntity,
+            toEntity: toEntity,
+            timestamp: Date(),
+            location: location,
+            notes: notes
+        )
+        
+        // Update data
+        updatedData.handoverHistory.append(handover)
+        updatedData.currentLocation = location
+        updatedData.currentHolder = toEntity
+        updatedData.status = .inTransit
+        
+        // Update the block with new data
+        blockchain.updateBlock(at: index, with: updatedData)
+        
+        // Save to Firebase
+        try await saveBlockchainToFirebase()
+    }
+    
+    // Verify medicine by shop owner
+    func verifyMedicine(blockId: String, shopId: String, location: String) async throws {
+        guard let index = blockchain.blocks.firstIndex(where: { $0.id == blockId }) else {
+            throw NSError(domain: "com.medi.blockchain", code: 404, 
+                         userInfo: [NSLocalizedDescriptionKey: "Block not found"])
+        }
+        
+        let block = blockchain.blocks[index]
+        var updatedData = block.data
+        
+        // Update status
+        updatedData.status = .verified
+        updatedData.currentHolder = shopId
+        updatedData.currentLocation = location
+        
+        // Update the block with new data
+        blockchain.updateBlock(at: index, with: updatedData)
+        
+        // Save to Firebase
+        try await saveBlockchainToFirebase()
+    }
+    
+    // Report suspicious medicine
+    func reportSuspiciousMedicine(blockId: String, reporterId: String, reason: String) async throws {
+        guard let index = blockchain.blocks.firstIndex(where: { $0.id == blockId }) else {
+            throw NSError(domain: "com.medi.blockchain", code: 404, 
+                         userInfo: [NSLocalizedDescriptionKey: "Block not found"])
+        }
+        
+        let block = blockchain.blocks[index]
+        var updatedData = block.data
+        
+        // Update status
+        updatedData.status = .suspicious
+        
+        // Add handover record with suspicious report
+        let handover = HandoverRecord(
+            fromEntity: updatedData.currentHolder,
+            toEntity: reporterId,
+            timestamp: Date(),
+            location: updatedData.currentLocation,
+            notes: "SUSPICIOUS: \(reason)"
+        )
+        
+        updatedData.handoverHistory.append(handover)
+        
+        // Update the block with new data
+        blockchain.updateBlock(at: index, with: updatedData)
+        
+        // Save to Firebase
+        try await saveBlockchainToFirebase()
+    }
+    
+    // Mark medicine as sold to customer
+    func markMedicineAsSold(blockId: String, shopId: String, customerId: String) async throws {
+        guard let index = blockchain.blocks.firstIndex(where: { $0.id == blockId }) else {
+            throw NSError(domain: "com.medi.blockchain", code: 404, 
+                         userInfo: [NSLocalizedDescriptionKey: "Block not found"])
+        }
+        
+        let block = blockchain.blocks[index]
+        var updatedData = block.data
+        
+        // Update status
+        updatedData.status = .sold
+        
+        // Add handover record for sale
+        let handover = HandoverRecord(
+            fromEntity: shopId,
+            toEntity: customerId,
+            timestamp: Date(),
+            location: updatedData.currentLocation,
+            notes: "Sold to customer"
+        )
+        
+        updatedData.handoverHistory.append(handover)
+        updatedData.currentHolder = customerId
+        
+        // Update the block with new data
+        blockchain.updateBlock(at: index, with: updatedData)
+        
+        // Save to Firebase
+        try await saveBlockchainToFirebase()
+    }
+    
+    // Get medicine details by scanning QR code
+    func getMedicineByBlockId(_ blockId: String) -> Block? {
+        return blockchain.blocks.first(where: { $0.id == blockId })
+    }
+    
+    // MARK: - Firebase Operations
+    
+    // Load blockchain from Firebase
+    func loadBlockchainFromFirebase() {
+        if isLoading { return } // Prevent multiple concurrent loads
+        
         isLoading = true
+        print("Loading blockchain from Firebase...")
+        
+        db.collection("blockchain").order(by: "timestamp").getDocuments { [weak self] (snapshot, error) in
+            guard let self = self else { return }
+            
+            if let error = error {
+                DispatchQueue.main.async {
+                    self.error = "Failed to load blockchain: \(error.localizedDescription)"
+                    self.isLoading = false
+                    print("Failed to load blockchain: \(error.localizedDescription)")
+                }
+                return
+            }
+            
+            guard let documents = snapshot?.documents, !documents.isEmpty else {
+                print("No blockchain data found, using genesis block")
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                }
+                return
+            }
+            
+            // Create new blockchain with blocks from Firebase
+            let newChain = Blockchain()
+            newChain.blocks.removeAll() // Remove genesis block
+            
+            do {
+                for document in documents {
+                    let data = document.data()
+                    
+                    // Parse block data
+                    guard 
+                        let id = data["id"] as? String,
+                        let timestampDouble = data["timestamp"] as? Double,
+                        let previousHash = data["previousHash"] as? String,
+                        let hash = data["hash"] as? String,
+                        let medicineDataMap = data["data"] as? [String: Any]
+                    else {
+                        continue
+                    }
+                    
+                    // Convert medicine data
+                    let jsonData = try JSONSerialization.data(withJSONObject: medicineDataMap)
+                    let medicineData = try JSONDecoder().decode(MedicineData.self, from: jsonData)
+                    
+                    // Create block
+                    let timestamp = Date(timeIntervalSince1970: timestampDouble)
+                    let block = Block(id: id, timestamp: timestamp, previousHash: previousHash, hash: hash, data: medicineData)
+                    
+                    newChain.blocks.append(block)
+                }
+                
+                // Validate the loaded blockchain
+                if newChain.blocks.isEmpty {
+                    print("No valid blocks found in Firebase")
+                } else if !newChain.isValid() {
+                    print("Loaded blockchain is invalid, using genesis block")
+                } else {
+                    print("Successfully loaded \(newChain.blocks.count) blocks from Firebase")
+                    DispatchQueue.main.async {
+                        self.blockchain.setBlocks(newChain.blocks)
+                    }
+                }
+            } catch {
+                print("Error parsing blockchain data: \(error.localizedDescription)")
+            }
+            
+            DispatchQueue.main.async {
+                self.isLoading = false
+            }
+        }
+    }
+    
+    // Save blockchain to Firebase
+    func saveBlockchainToFirebase() async throws {
+        DispatchQueue.main.async {
+            self.isLoading = true
+        }
         
         do {
-            // Generate QR code image first
-            let qrCodeImage = generateQRCode(for: medicine.id)
-            
-            // Upload QR code to Firebase Storage
-            let qrCodeURL = try await uploadQRCode(medicineId: medicine.id, qrImage: qrCodeImage)
-            
-            // Update medicine with QR code URL
-            var updatedMedicine = medicine
-            updatedMedicine.qrCodeURL = qrCodeURL
-            
-            // Save medicine to Firestore
-            try await db.collection("medicines").document(medicine.id).setData([
-                "id": updatedMedicine.id,
-                "drugID": updatedMedicine.drugID,
-                "manufacturerName": updatedMedicine.manufacturerName,
-                "drugName": updatedMedicine.drugName,
-                "composition": updatedMedicine.composition,
-                "manufactureDate": updatedMedicine.manufactureDate,
-                "expiryDate": updatedMedicine.expiryDate,
-                "manufacturingLocation": updatedMedicine.manufacturingLocation,
-                "qrCodeURL": updatedMedicine.qrCodeURL ?? "",
-                "registeredBy": updatedMedicine.registeredBy,
-                "registrationDate": updatedMedicine.registrationDate,
-                "isVerified": updatedMedicine.isVerified,
-                "currentOwner": updatedMedicine.currentOwner,
-                "status": updatedMedicine.status.rawValue
-            ])
-            
-            // Create the first blockchain entry for registration
-            let blockchainEntry = BlockchainEntry(
-                medicineId: updatedMedicine.id,
-                eventType: .registration,
-                fromOwner: updatedMedicine.registeredBy,
-                location: updatedMedicine.manufacturingLocation,
-                additionalInfo: [
-                    "drugID": updatedMedicine.drugID,
-                    "manufacturerName": updatedMedicine.manufacturerName,
-                    "drugName": updatedMedicine.drugName
+            // Add each block to Firebase
+            for block in blockchain.blocks {
+                let blockRef = db.collection("blockchain").document(block.id)
+                
+                var data: [String: Any] = [
+                    "id": block.id,
+                    "timestamp": block.timestamp.timeIntervalSince1970,
+                    "previousHash": block.previousHash,
+                    "hash": block.hash
                 ]
-            )
-            
-            try await addBlockchainEntry(blockchainEntry)
+                
+                // Convert medicine data to dictionary
+                let encoder = JSONEncoder()
+                let jsonData = try encoder.encode(block.data)
+                if let medicineDict = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    data["data"] = medicineDict
+                }
+                
+                try await blockRef.setData(data)
+            }
             
             DispatchQueue.main.async {
                 self.isLoading = false
-                self.successMessage = "Medicine registered successfully!"
             }
-            
-            return updatedMedicine.id
-            
         } catch {
             DispatchQueue.main.async {
+                self.error = "Failed to save blockchain: \(error.localizedDescription)"
                 self.isLoading = false
-                self.errorMessage = "Failed to register medicine: \(error.localizedDescription)"
             }
             throw error
         }
     }
     
-    func getMedicine(by id: String) async throws -> Medicine {
-        do {
-            let document = try await db.collection("medicines").document(id).getDocument()
-            
-            guard let data = document.data(),
-                  let status = MedicineStatus(rawValue: data["status"] as? String ?? "") else {
-                throw NSError(domain: "com.medi.blockchain", code: 404, userInfo: [NSLocalizedDescriptionKey: "Medicine not found or invalid data"])
-            }
-            
-            // Convert Firestore timestamp to Date
-            let manufactureDate = (data["manufactureDate"] as? Timestamp)?.dateValue() ?? Date()
-            let expiryDate = (data["expiryDate"] as? Timestamp)?.dateValue() ?? Date()
-            let registrationDate = (data["registrationDate"] as? Timestamp)?.dateValue() ?? Date()
-            
-            let medicine = Medicine(
-                id: data["id"] as? String ?? "",
-                drugID: data["drugID"] as? String ?? "",
-                manufacturerName: data["manufacturerName"] as? String ?? "",
-                drugName: data["drugName"] as? String ?? "",
-                composition: data["composition"] as? String ?? "",
-                manufactureDate: manufactureDate,
-                expiryDate: expiryDate,
-                manufacturingLocation: data["manufacturingLocation"] as? String ?? "",
-                qrCodeURL: data["qrCodeURL"] as? String,
-                registeredBy: data["registeredBy"] as? String ?? "",
-                registrationDate: registrationDate,
-                isVerified: data["isVerified"] as? Bool ?? true,
-                currentOwner: data["currentOwner"] as? String ?? "",
-                status: status
-            )
-            
-            return medicine
-            
-        } catch {
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to fetch medicine: \(error.localizedDescription)"
-            }
-            throw error
-        }
+    // MARK: - QR Code Generation
+    
+    // Generate QR code and store in Firebase Storage
+    func generateAndStoreQRCode(for blockId: String) async throws -> String {
+        let qrGenerator = QRCodeGenerator()
+        let qrImage = qrGenerator.generateQRCode(from: blockId)
+        
+        // In a real app, you would upload the QR image to Firebase Storage
+        // For now, we'll just return a placeholder URL
+        return "https://medi-app.com/qr/\(blockId)"
     }
-    
-    func updateMedicineStatus(medicineId: String, newStatus: MedicineStatus, newOwner: String? = nil) async throws {
-        do {
-            var updateData: [String: Any] = ["status": newStatus.rawValue]
-            
-            if let newOwner = newOwner {
-                updateData["currentOwner"] = newOwner
-            }
-            
-            try await db.collection("medicines").document(medicineId).updateData(updateData)
-            
-            DispatchQueue.main.async {
-                self.successMessage = "Medicine status updated successfully!"
-            }
-            
-        } catch {
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to update medicine status: \(error.localizedDescription)"
-            }
-            throw error
+}
+
+// Helper class for QR code generation
+class QRCodeGenerator {
+    func generateQRCode(from string: String) -> UIImage {
+        let data = string.data(using: .ascii)
+        let filter = CIFilter(name: "CIQRCodeGenerator")
+        
+        filter?.setValue(data, forKey: "inputMessage")
+        filter?.setValue("H", forKey: "inputCorrectionLevel")
+        
+        guard let ciImage = filter?.outputImage else {
+            return UIImage(systemName: "xmark.circle") ?? UIImage()
         }
-    }
-    
-    func getMedicinesByOwner(ownerId: String) async throws -> [Medicine] {
-        do {
-            let snapshot = try await db.collection("medicines")
-                .whereField("currentOwner", isEqualTo: ownerId)
-                .getDocuments()
-            
-            var medicines: [Medicine] = []
-            
-            for document in snapshot.documents {
-                let data = document.data()
-                
-                guard let status = MedicineStatus(rawValue: data["status"] as? String ?? "") else {
-                    continue
-                }
-                
-                let manufactureDate = (data["manufactureDate"] as? Timestamp)?.dateValue() ?? Date()
-                let expiryDate = (data["expiryDate"] as? Timestamp)?.dateValue() ?? Date()
-                let registrationDate = (data["registrationDate"] as? Timestamp)?.dateValue() ?? Date()
-                
-                let medicine = Medicine(
-                    id: data["id"] as? String ?? "",
-                    drugID: data["drugID"] as? String ?? "",
-                    manufacturerName: data["manufacturerName"] as? String ?? "",
-                    drugName: data["drugName"] as? String ?? "",
-                    composition: data["composition"] as? String ?? "",
-                    manufactureDate: manufactureDate,
-                    expiryDate: expiryDate,
-                    manufacturingLocation: data["manufacturingLocation"] as? String ?? "",
-                    qrCodeURL: data["qrCodeURL"] as? String,
-                    registeredBy: data["registeredBy"] as? String ?? "",
-                    registrationDate: registrationDate,
-                    isVerified: data["isVerified"] as? Bool ?? true,
-                    currentOwner: data["currentOwner"] as? String ?? "",
-                    status: status
-                )
-                
-                medicines.append(medicine)
-            }
-            
-            DispatchQueue.main.async {
-                self.medicines = medicines
-            }
-            
-            return medicines
-            
-        } catch {
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to fetch medicines: \(error.localizedDescription)"
-            }
-            throw error
-        }
-    }
-    
-    // MARK: - Blockchain Management
-    
-    func addBlockchainEntry(_ entry: BlockchainEntry) async throws {
-        do {
-            // First, get the latest entry for this medicine to get the previous hash
-            var updatedEntry = entry
-            
-            if entry.previousEntryHash == nil {
-                // If no previous hash provided, try to find the latest entry
-                do {
-                    let latestEntry = try await getLatestBlockchainEntry(for: entry.medicineId)
-                    updatedEntry = BlockchainEntry(
-                        id: entry.id,
-                        medicineId: entry.medicineId,
-                        timestamp: entry.timestamp,
-                        eventType: entry.eventType,
-                        fromOwner: entry.fromOwner,
-                        toOwner: entry.toOwner,
-                        location: entry.location,
-                        additionalInfo: entry.additionalInfo,
-                        previousEntryHash: latestEntry?.entryHash
-                    )
-                } catch {
-                    // If no latest entry found, this is the first entry
-                    print("No previous blockchain entry found, creating the first one")
-                }
-            }
-            
-            // Save to Firestore
-            try await db.collection("blockchain").document(updatedEntry.id).setData([
-                "id": updatedEntry.id,
-                "medicineId": updatedEntry.medicineId,
-                "timestamp": updatedEntry.timestamp,
-                "eventType": updatedEntry.eventType.rawValue,
-                "fromOwner": updatedEntry.fromOwner,
-                "toOwner": updatedEntry.toOwner as Any,
-                "location": updatedEntry.location as Any,
-                "additionalInfo": updatedEntry.additionalInfo as Any,
-                "previousEntryHash": updatedEntry.previousEntryHash as Any,
-                "entryHash": updatedEntry.entryHash
-            ])
-            
-            DispatchQueue.main.async {
-                self.successMessage = "Blockchain entry added successfully!"
-            }
-            
-        } catch {
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to add blockchain entry: \(error.localizedDescription)"
-            }
-            throw error
-        }
-    }
-    
-    func getBlockchainHistory(for medicineId: String) async throws -> [BlockchainEntry] {
-        do {
-            let snapshot = try await db.collection("blockchain")
-                .whereField("medicineId", isEqualTo: medicineId)
-                .order(by: "timestamp", descending: false)
-                .getDocuments()
-            
-            var entries: [BlockchainEntry] = []
-            
-            for document in snapshot.documents {
-                let data = document.data()
-                
-                guard let eventTypeString = data["eventType"] as? String,
-                      let eventType = EventType(rawValue: eventTypeString) else {
-                    continue
-                }
-                
-                let timestamp = (data["timestamp"] as? Timestamp)?.dateValue() ?? Date()
-                
-                let entry = BlockchainEntry(
-                    id: data["id"] as? String ?? "",
-                    medicineId: data["medicineId"] as? String ?? "",
-                    timestamp: timestamp,
-                    eventType: eventType,
-                    fromOwner: data["fromOwner"] as? String ?? "",
-                    toOwner: data["toOwner"] as? String,
-                    location: data["location"] as? String,
-                    additionalInfo: data["additionalInfo"] as? [String: String],
-                    previousEntryHash: data["previousEntryHash"] as? String
-                )
-                
-                entries.append(entry)
-            }
-            
-            DispatchQueue.main.async {
-                self.blockchainEntries = entries
-            }
-            
-            return entries
-            
-        } catch {
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to fetch blockchain history: \(error.localizedDescription)"
-            }
-            throw error
-        }
-    }
-    
-    func getLatestBlockchainEntry(for medicineId: String) async throws -> BlockchainEntry? {
-        do {
-            let snapshot = try await db.collection("blockchain")
-                .whereField("medicineId", isEqualTo: medicineId)
-                .order(by: "timestamp", descending: true)
-                .limit(to: 1)
-                .getDocuments()
-            
-            if let document = snapshot.documents.first {
-                let data = document.data()
-                
-                guard let eventTypeString = data["eventType"] as? String,
-                      let eventType = EventType(rawValue: eventTypeString) else {
-                    return nil
-                }
-                
-                let timestamp = (data["timestamp"] as? Timestamp)?.dateValue() ?? Date()
-                
-                let entry = BlockchainEntry(
-                    id: data["id"] as? String ?? "",
-                    medicineId: data["medicineId"] as? String ?? "",
-                    timestamp: timestamp,
-                    eventType: eventType,
-                    fromOwner: data["fromOwner"] as? String ?? "",
-                    toOwner: data["toOwner"] as? String,
-                    location: data["location"] as? String,
-                    additionalInfo: data["additionalInfo"] as? [String: String],
-                    previousEntryHash: data["previousEntryHash"] as? String
-                )
-                
-                return entry
-            }
-            
-            return nil
-            
-        } catch {
-            throw error
-        }
-    }
-    
-    func validateBlockchainIntegrity(for medicineId: String) async throws -> Bool {
-        do {
-            let entries = try await getBlockchainHistory(for: medicineId)
-            
-            // If there's only one entry or no entries, the chain is valid
-            if entries.count <= 1 {
-                return true
-            }
-            
-            // Check each entry's hash against the previous hash reference
-            for i in 1..<entries.count {
-                let currentEntry = entries[i]
-                let previousEntry = entries[i-1]
-                
-                // Verify that the current entry's previousEntryHash matches the previous entry's actual hash
-                if currentEntry.previousEntryHash != previousEntry.entryHash {
-                    return false
-                }
-            }
-            
-            return true
-            
-        } catch {
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to validate blockchain: \(error.localizedDescription)"
-            }
-            throw error
-        }
-    }
-    
-    // MARK: - QR Code Generation and Scanning
-    
-    private func generateQRCode(for medicineId: String) -> UIImage {
+        
+        let transform = CGAffineTransform(scaleX: 10, y: 10)
+        let scaledCIImage = ciImage.transformed(by: transform)
+        
         let context = CIContext()
-        let filter = CIFilter.qrCodeGenerator()
-        let data = medicineId.data(using: .utf8)
-        
-        filter.setValue(data, forKey: "inputMessage")
-        filter.setValue("H", forKey: "inputCorrectionLevel") // High error correction
-        
-        if let outputImage = filter.outputImage {
-            // Scale the QR code image
-            let scale = 10.0
-            let scaledImage = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            
-            if let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent) {
-                return UIImage(cgImage: cgImage)
-            }
+        guard let cgImage = context.createCGImage(scaledCIImage, from: scaledCIImage.extent) else {
+            return UIImage(systemName: "xmark.circle") ?? UIImage()
         }
         
-        // Return a placeholder image if QR code generation fails
-        return UIImage(systemName: "qrcode") ?? UIImage()
-    }
-    
-    private func uploadQRCode(medicineId: String, qrImage: UIImage) async throws -> String {
-        guard let imageData = qrImage.jpegData(compressionQuality: 0.8) else {
-            throw NSError(domain: "com.medi.blockchain", code: 500, userInfo: [NSLocalizedDescriptionKey: "Failed to convert QR code to data"])
-        }
-        
-        let qrCodeRef = storage.child("qrcodes/\(medicineId).jpg")
-        
-        _ = try await qrCodeRef.putDataAsync(imageData)
-        let downloadURL = try await qrCodeRef.downloadURL()
-        
-        return downloadURL.absoluteString
+        return UIImage(cgImage: cgImage)
     }
 } 

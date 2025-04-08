@@ -59,6 +59,9 @@ struct ContentView: View {
             case .none:
                 LoginView()
                     .environmentObject(authService)
+            case .some(.transportation):
+                TransportationDashboard()
+                    .environmentObject(authService)
             }
         } else {
             LoginView()

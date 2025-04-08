@@ -66,8 +66,11 @@ struct SignUpView: View {
                             .fontWeight(.medium)
                             .foregroundColor(.gray)
                         
-                        HStack(spacing: 12) {
-                            ForEach([UserType.consumer, UserType.companyOwner, UserType.shopOwner], id: \.self) { type in
+                        LazyVGrid(columns: [
+                            GridItem(.flexible()),
+                            GridItem(.flexible())
+                        ], spacing: 12) {
+                            ForEach([UserType.consumer, UserType.companyOwner, UserType.shopOwner, UserType.transportation], id: \.self) { type in
                                 MinimalUserTypeButton(
                                     title: userTypeName(type),
                                     iconName: userTypeIcon(type),
@@ -299,6 +302,8 @@ struct SignUpView: View {
             return "Company"
         case .shopOwner:
             return "Shop"
+        case .transportation:
+            return "Transport"
         }
     }
     
@@ -310,6 +315,8 @@ struct SignUpView: View {
             return "building.2.fill"
         case .shopOwner:
             return "bag.fill"
+        case .transportation:
+            return "truck.fill"
         }
     }
     
@@ -623,6 +630,7 @@ struct MinimalUserTypeButton: View {
             .foregroundColor(isSelected ? .white : .blue)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
+            .frame(height: 70)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(isSelected ? Color.blue : Color(.systemGray6))

@@ -1,13 +1,40 @@
 import SwiftUI
+import FirebaseFirestore
 
-struct ShopOwnerDashboard: View {
+// Delivery Model
+struct Delivery: Identifiable {
+    var id: String
+    var orderNumber: String
+    var origin: String
+    var destination: String
+    var status: DeliveryStatus
+    var timestamp: Date
+    
+    enum DeliveryStatus: String, Codable {
+        case pending = "Pending"
+        case inTransit = "In Transit"
+        case delivered = "Delivered"
+        case cancelled = "Cancelled"
+        
+        var color: Color {
+            switch self {
+            case .pending: return .orange
+            case .inTransit: return .blue
+            case .delivered: return .green
+            case .cancelled: return .red
+            }
+        }
+    }
+}
+
+struct TransportationDashboard: View {
     @EnvironmentObject var authService: AuthService
     @StateObject private var blockchainService = BlockchainService()
     @State private var selectedTab = 0
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            ShopHomeView()
+            TransportationHomeView()
                 .environmentObject(authService)
                 .environmentObject(blockchainService)
                 .tabItem {
@@ -15,23 +42,23 @@ struct ShopOwnerDashboard: View {
                 }
                 .tag(0)
             
-            ShopInventoryView()
+            TransportationOrdersView()
                 .environmentObject(authService)
                 .environmentObject(blockchainService)
                 .tabItem {
-                    Label("Inventory", systemImage: "list.bullet.clipboard.fill")
+                    Label("Orders", systemImage: "list.bullet.clipboard.fill")
                 }
                 .tag(1)
             
-            ShopScannerView()
+            TransportationScannerView()
                 .environmentObject(authService)
                 .environmentObject(blockchainService)
                 .tabItem {
-                    Label("Verify", systemImage: "qrcode.viewfinder")
+                    Label("Scan", systemImage: "qrcode.viewfinder")
                 }
                 .tag(2)
             
-            ShopProfileView()
+            TransportationProfileView()
                 .environmentObject(authService)
                 .tabItem {
                     Label("Profile", systemImage: "person.fill")
@@ -46,11 +73,17 @@ struct ShopOwnerDashboard: View {
     }
 }
 
-struct ShopHomeView: View {
+struct TransportationHomeView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var blockchainService: BlockchainService
-    @State private var medicines: [Block] = []
+    @State private var deliveries: [Block] = []
     @State private var isLoading = true
+    @State private var error: String? = nil
+    
+    // Stats
+    @State private var pendingCount = 0
+    @State private var completedCount = 0
+    @State private var totalCount = 0
     
     var body: some View {
         NavigationView {
@@ -59,20 +92,18 @@ struct ShopHomeView: View {
                     // Header
                     HStack {
                         VStack(alignment: .leading) {
-                            Text("Shop Dashboard")
+                            Text("Transportation Dashboard")
                                 .font(.title)
                                 .fontWeight(.bold)
                             
-                            if let user = authService.user {
-                                Text("Welcome, \(user.fullName)")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                            }
+                            Text("Manage your deliveries")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
                         }
                         
                         Spacer()
                         
-                        Image(systemName: "bag.fill")
+                        Image(systemName: "truck.fill")
                             .font(.system(size: 40))
                             .foregroundColor(.blue)
                     }
@@ -80,7 +111,7 @@ struct ShopHomeView: View {
                     
                     // Stats Card
                     VStack(alignment: .leading, spacing: 15) {
-                        Text("Medicine Statistics")
+                        Text("Today's Stats")
                             .font(.headline)
                         
                         if isLoading {
@@ -95,9 +126,9 @@ struct ShopHomeView: View {
                             }
                         } else {
                             HStack(spacing: 20) {
-                                ShopStatCard(title: "Verified", value: "\(verifiedCount)", icon: "checkmark.circle.fill", color: .green)
-                                ShopStatCard(title: "Pending", value: "\(pendingCount)", icon: "clock.fill", color: .orange)
-                                ShopStatCard(title: "Suspicious", value: "\(suspiciousCount)", icon: "exclamationmark.triangle.fill", color: .red)
+                                StatCard(title: "Pending", value: "\(pendingCount)", icon: "clock.fill", color: .orange)
+                                StatCard(title: "Completed", value: "\(completedCount)", icon: "checkmark.circle.fill", color: .green)
+                                StatCard(title: "Total", value: "\(totalCount)", icon: "chart.bar.fill", color: .blue)
                             }
                         }
                     }
@@ -106,9 +137,9 @@ struct ShopHomeView: View {
                     .cornerRadius(12)
                     .padding(.horizontal)
                     
-                    // Recent Medicines
+                    // Recent Deliveries
                     VStack(alignment: .leading, spacing: 15) {
-                        Text("Recently Verified Medicines")
+                        Text("Recent Deliveries")
                             .font(.headline)
                             .padding(.horizontal)
                         
@@ -121,15 +152,15 @@ struct ShopHomeView: View {
                                     .cornerRadius(10)
                                     .padding(.horizontal)
                             }
-                        } else if medicines.isEmpty {
-                            Text("No verified medicines found")
+                        } else if deliveries.isEmpty {
+                            Text("No deliveries found")
                                 .foregroundColor(.gray)
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding()
                         } else {
-                            ForEach(medicines) { block in
-                                NavigationLink(destination: ShopMedicineDetailView(block: block)) {
-                                    ShopMedicineCard(block: block)
+                            ForEach(deliveries) { block in
+                                NavigationLink(destination: TransportationDeliveryDetailView(block: block)) {
+                                    TransportationDeliveryCard(block: block)
                                 }
                                 .buttonStyle(PlainButtonStyle())
                             }
@@ -141,81 +172,47 @@ struct ShopHomeView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
-                        fetchMedicines()
+                        fetchDeliveries()
                     }) {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
             }
             .onAppear {
-                fetchMedicines()
+                fetchDeliveries()
             }
         }
     }
     
-    private var verifiedCount: Int {
-        return medicines.filter { $0.data.status == .verified }.count
-    }
-    
-    private var pendingCount: Int {
-        return medicines.filter { $0.data.status == .inTransit || $0.data.status == .delivered }.count
-    }
-    
-    private var suspiciousCount: Int {
-        return medicines.filter { $0.data.status == .suspicious }.count
-    }
-    
-    private func fetchMedicines() {
+    private func fetchDeliveries() {
         isLoading = true
         
-        // Get medicines held by this shop
+        // Get deliveries assigned to this transporter
         guard let userId = authService.user?.id else {
             isLoading = false
             return
         }
         
-        // Filter blockchain for medicines currently held by this shop
-        let shopMedicines = blockchainService.blockchain.blocks.filter { block in
+        // Filter blockchain for medicines currently held by this transporter
+        // or where the transporter is in the handover history
+        let transporterMedicines = blockchainService.blockchain.blocks.filter { block in
             return block.data.currentHolder == userId || 
-                   block.data.handoverHistory.contains(where: { $0.toEntity == userId })
+                   block.data.handoverHistory.contains(where: { $0.fromEntity == userId || $0.toEntity == userId })
         }
         
         // Sort by most recent first
-        medicines = shopMedicines.sorted { $0.timestamp > $1.timestamp }
+        deliveries = transporterMedicines.sorted { $0.timestamp > $1.timestamp }
+        
+        // Update stats
+        pendingCount = deliveries.filter { $0.data.status == .inTransit || $0.data.status == .registered }.count
+        completedCount = deliveries.filter { $0.data.status == .delivered || $0.data.status == .verified }.count
+        totalCount = deliveries.count
         
         isLoading = false
     }
 }
 
-struct ShopStatCard: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
-    
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 24))
-                .foregroundColor(color)
-            
-            Text(value)
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            Text(title)
-                .font(.caption)
-                .foregroundColor(.gray)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-        .background(Color.white)
-        .cornerRadius(10)
-        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
-    }
-}
-
-struct ShopMedicineCard: View {
+struct TransportationDeliveryCard: View {
     let block: Block
     
     var body: some View {
@@ -224,7 +221,7 @@ struct ShopMedicineCard: View {
                 Text(block.data.drugName)
                     .font(.headline)
                 
-                Text("Batch: \(block.data.batchNumber)")
+                Text("From: \(block.data.manufacturingLocation) • To: \(block.data.currentLocation)")
                     .font(.subheadline)
                     .foregroundColor(.gray)
                 
@@ -263,9 +260,7 @@ struct ShopMedicineCard: View {
             return .blue
         case .inTransit:
             return .orange
-        case .delivered:
-            return .blue
-        case .verified:
+        case .delivered, .verified:
             return .green
         case .suspicious:
             return .red
@@ -281,72 +276,73 @@ struct ShopMedicineCard: View {
     }
 }
 
-struct ShopInventoryView: View {
+struct TransportationOrdersView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var blockchainService: BlockchainService
-    @State private var medicines: [Block] = []
+    @State private var deliveries: [Block] = []
     @State private var isLoading = true
+    @State private var error: String? = nil
     
     var body: some View {
         NavigationView {
             Group {
                 if isLoading {
-                    ProgressView("Loading inventory...")
-                } else if medicines.isEmpty {
+                    ProgressView("Loading orders...")
+                } else if deliveries.isEmpty {
                     VStack(spacing: 20) {
-                        Image(systemName: "bag")
+                        Image(systemName: "list.bullet.clipboard")
                             .font(.system(size: 50))
                             .foregroundColor(.gray)
-                        Text("No medicines in inventory")
+                        Text("No deliveries found")
                             .font(.headline)
                             .foregroundColor(.gray)
                     }
                 } else {
-                    List(medicines) { block in
-                        NavigationLink(destination: ShopMedicineDetailView(block: block)) {
-                            ShopMedicineCard(block: block)
+                    List(deliveries) { block in
+                        NavigationLink(destination: TransportationDeliveryDetailView(block: block)) {
+                            TransportationDeliveryCard(block: block)
                                 .padding(.vertical, 4)
                         }
                     }
                 }
             }
-            .navigationTitle("Inventory")
+            .navigationTitle("Orders")
             .onAppear {
-                fetchMedicines()
+                fetchDeliveries()
             }
             .refreshable {
-                fetchMedicines()
+                fetchDeliveries()
             }
         }
     }
     
-    private func fetchMedicines() {
+    private func fetchDeliveries() {
         isLoading = true
         
-        // Get medicines held by this shop
+        // Get deliveries assigned to this transporter
         guard let userId = authService.user?.id else {
             isLoading = false
             return
         }
         
-        // Filter blockchain for medicines currently held by this shop
-        let shopMedicines = blockchainService.blockchain.blocks.filter { block in
-            return block.data.currentHolder == userId
+        // Filter blockchain for medicines currently held by this transporter
+        let transporterMedicines = blockchainService.blockchain.blocks.filter { block in
+            return block.data.currentHolder == userId || 
+                   block.data.handoverHistory.contains(where: { $0.fromEntity == userId || $0.toEntity == userId })
         }
         
         // Sort by most recent first
-        medicines = shopMedicines.sorted { $0.timestamp > $1.timestamp }
+        deliveries = transporterMedicines.sorted { $0.timestamp > $1.timestamp }
         
         isLoading = false
     }
 }
 
-struct ShopMedicineDetailView: View {
+struct TransportationDeliveryDetailView: View {
     let block: Block
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var blockchainService: BlockchainService
-    @State private var showingVerificationSheet = false
-    @State private var showingSellSheet = false
+    @State private var showingHandoverSheet = false
     @State private var isUpdating = false
     @State private var showAlert = false
     @State private var alertMessage = ""
@@ -380,19 +376,7 @@ struct ShopMedicineDetailView: View {
                         DetailRow(label: "Drug Name", value: block.data.drugName)
                         DetailRow(label: "Drug ID", value: block.data.drugId)
                         DetailRow(label: "Batch Number", value: block.data.batchNumber)
-                        DetailRow(label: "Composition", value: block.data.composition)
-                        DetailRow(label: "Manufacture Date", value: formatDate(block.data.manufactureDate, includeTime: false))
-                        DetailRow(label: "Expiry Date", value: formatDate(block.data.expiryDate, includeTime: false))
-                    }
-                    .padding(.vertical)
-                }
-                .padding(.horizontal)
-                
-                // Manufacturer Details
-                GroupBox(label: Label("Manufacturer Details", systemImage: "building.2.fill")) {
-                    VStack(alignment: .leading, spacing: 12) {
                         DetailRow(label: "Manufacturer", value: block.data.manufacturerName)
-                        DetailRow(label: "Manufacturing Location", value: block.data.manufacturingLocation)
                     }
                     .padding(.vertical)
                 }
@@ -448,97 +432,49 @@ struct ShopMedicineDetailView: View {
                 }
                 
                 // Actions
-                if block.data.currentHolder == authService.user?.id {
-                    GroupBox {
-                        VStack(spacing: 15) {
-                            if block.data.status == .inTransit || block.data.status == .delivered {
-                                Button(action: {
-                                    showingVerificationSheet = true
-                                }) {
-                                    HStack {
-                                        Spacer()
-                                        Text("Verify Medicine")
-                                            .fontWeight(.semibold)
-                                        Spacer()
-                                    }
-                                    .padding()
-                                    .background(Color.blue)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(10)
-                                }
+                GroupBox {
+                    if block.data.currentHolder == authService.user?.id {
+                        Button(action: {
+                            showingHandoverSheet = true
+                        }) {
+                            HStack {
+                                Spacer()
+                                Text("Update Delivery Status")
+                                    .fontWeight(.semibold)
+                                Spacer()
                             }
-                            
-                            if block.data.status == .verified {
-                                Button(action: {
-                                    showingSellSheet = true
-                                }) {
-                                    HStack {
-                                        Spacer()
-                                        Text("Sell to Customer")
-                                            .fontWeight(.semibold)
-                                        Spacer()
-                                    }
-                                    .padding()
-                                    .background(Color.green)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(10)
-                                }
-                            }
-                            
-                            Button(action: {
-                                reportSuspicious()
-                            }) {
-                                HStack {
-                                    Spacer()
-                                    Text("Report Suspicious")
-                                        .fontWeight(.semibold)
-                                    Spacer()
-                                }
-                                .padding()
-                                .background(Color.red)
-                                .foregroundColor(.white)
-                                .cornerRadius(10)
-                            }
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
                         }
-                    }
-                    .padding(.horizontal)
-                } else {
-                    GroupBox {
-                        Text("This medicine is not currently in your inventory.")
+                    } else {
+                        Text("This medicine is not currently in your possession.")
                             .font(.callout)
                             .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity)
                     }
-                    .padding(.horizontal)
                 }
+                .padding(.horizontal)
                 
                 Spacer()
             }
             .padding(.vertical)
             .navigationTitle(block.data.drugName)
             .navigationBarTitleDisplayMode(.inline)
-            .sheet(isPresented: $showingVerificationSheet) {
-                VerificationFormView(
+            .sheet(isPresented: $showingHandoverSheet) {
+                HandoverFormView(
                     block: block,
                     isUpdating: $isUpdating,
                     showAlert: $showAlert,
                     alertMessage: $alertMessage,
-                    onVerify: verifyMedicine
-                )
-            }
-            .sheet(isPresented: $showingSellSheet) {
-                SellFormView(
-                    block: block,
-                    isUpdating: $isUpdating,
-                    showAlert: $showAlert,
-                    alertMessage: $alertMessage,
-                    onSell: sellMedicine
+                    onHandover: updateHandover
                 )
             }
             .alert(isPresented: $showAlert) {
                 Alert(
-                    title: Text("Medicine Update"),
+                    title: Text("Delivery Update"),
                     message: Text(alertMessage),
                     dismissButton: .default(Text("OK"))
                 )
@@ -546,14 +482,14 @@ struct ShopMedicineDetailView: View {
         }
     }
     
-    private func formatDate(_ date: Date, includeTime: Bool = true) -> String {
+    private func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
-        formatter.timeStyle = includeTime ? .short : .none
+        formatter.timeStyle = .short
         return formatter.string(from: date)
     }
     
-    private func verifyMedicine(location: String, notes: String) {
+    private func updateHandover(toEntity: String, location: String, notes: String) {
         guard let userId = authService.user?.id else {
             alertMessage = "User information not available"
             showAlert = true
@@ -562,104 +498,40 @@ struct ShopMedicineDetailView: View {
         
         Task {
             do {
-                try await blockchainService.verifyMedicine(
+                try await blockchainService.updateMedicineHandover(
                     blockId: block.id,
-                    shopId: userId,
-                    location: location
+                    fromEntity: userId,
+                    toEntity: toEntity,
+                    location: location,
+                    notes: notes
                 )
                 
                 DispatchQueue.main.async {
-                    alertMessage = "Medicine verified successfully!"
+                    alertMessage = "Delivery status updated successfully!"
                     showAlert = true
                     isUpdating = false
-                    showingVerificationSheet = false
+                    showingHandoverSheet = false
                 }
             } catch {
                 DispatchQueue.main.async {
-                    alertMessage = "Failed to verify medicine: \(error.localizedDescription)"
+                    alertMessage = "Failed to update delivery: \(error.localizedDescription)"
                     showAlert = true
                     isUpdating = false
-                }
-            }
-        }
-    }
-    
-    private func sellMedicine(customerId: String) {
-        guard let userId = authService.user?.id else {
-            alertMessage = "User information not available"
-            showAlert = true
-            return
-        }
-        
-        Task {
-            do {
-                try await blockchainService.markMedicineAsSold(
-                    blockId: block.id,
-                    shopId: userId,
-                    customerId: customerId
-                )
-                
-                DispatchQueue.main.async {
-                    alertMessage = "Medicine marked as sold successfully!"
-                    showAlert = true
-                    isUpdating = false
-                    showingSellSheet = false
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    alertMessage = "Failed to update medicine: \(error.localizedDescription)"
-                    showAlert = true
-                    isUpdating = false
-                }
-            }
-        }
-    }
-    
-    private func reportSuspicious() {
-        guard let userId = authService.user?.id else {
-            alertMessage = "User information not available"
-            showAlert = true
-            return
-        }
-        
-        // Show an alert to confirm before reporting
-        alertMessage = "Are you sure you want to report this medicine as suspicious? This action cannot be undone."
-        showAlert = true
-        
-        // In a real app, you would implement a confirmation dialog
-        // For now, just simulate reporting after a delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-            Task {
-                do {
-                    try await blockchainService.reportSuspiciousMedicine(
-                        blockId: block.id,
-                        reporterId: userId,
-                        reason: "Reported by shop owner"
-                    )
-                    
-                    DispatchQueue.main.async {
-                        alertMessage = "Medicine reported as suspicious!"
-                        showAlert = true
-                    }
-                } catch {
-                    DispatchQueue.main.async {
-                        alertMessage = "Failed to report medicine: \(error.localizedDescription)"
-                        showAlert = true
-                    }
                 }
             }
         }
     }
 }
 
-struct VerificationFormView: View {
+struct HandoverFormView: View {
     let block: Block
     @Binding var isUpdating: Bool
     @Binding var showAlert: Bool
     @Binding var alertMessage: String
-    let onVerify: (String, String) -> Void
+    let onHandover: (String, String, String) -> Void
     
     @Environment(\.presentationMode) var presentationMode
+    @State private var toEntity = ""
     @State private var location = ""
     @State private var notes = ""
     
@@ -674,16 +546,17 @@ struct VerificationFormView: View {
                         .foregroundColor(.gray)
                 }
                 
-                Section(header: Text("Verification Details")) {
+                Section(header: Text("Handover Details")) {
+                    TextField("Recipient ID or Name", text: $toEntity)
                     TextField("Current Location", text: $location)
-                    TextField("Notes (Optional)", text: $notes)
+                    TextField("Notes", text: $notes)
                 }
                 
                 Section {
                     Button(action: {
                         if isFormValid {
                             isUpdating = true
-                            onVerify(location, notes)
+                            onHandover(toEntity, location, notes)
                         } else {
                             alertMessage = "Please fill in all required fields"
                             showAlert = true
@@ -693,7 +566,7 @@ struct VerificationFormView: View {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
-                            Text("Verify Medicine")
+                            Text("Update Delivery Status")
                                 .frame(maxWidth: .infinity)
                                 .foregroundColor(.white)
                         }
@@ -702,7 +575,7 @@ struct VerificationFormView: View {
                     .listRowBackground(isFormValid ? Color.blue : Color.gray)
                 }
             }
-            .navigationTitle("Verify Medicine")
+            .navigationTitle("Update Delivery")
             .navigationBarItems(trailing: Button("Cancel") {
                 presentationMode.wrappedValue.dismiss()
             })
@@ -711,75 +584,11 @@ struct VerificationFormView: View {
     }
     
     private var isFormValid: Bool {
-        return !location.isEmpty
+        return !toEntity.isEmpty && !location.isEmpty
     }
 }
 
-struct SellFormView: View {
-    let block: Block
-    @Binding var isUpdating: Bool
-    @Binding var showAlert: Bool
-    @Binding var alertMessage: String
-    let onSell: (String) -> Void
-    
-    @Environment(\.presentationMode) var presentationMode
-    @State private var customerId = "consumer-" // Prefill with consumer prefix
-    
-    var body: some View {
-        NavigationView {
-            Form {
-                Section(header: Text("Medicine Information")) {
-                    Text(block.data.drugName)
-                        .font(.headline)
-                    Text("Batch: \(block.data.batchNumber)")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                }
-                
-                Section(header: Text("Customer Information")) {
-                    TextField("Customer ID", text: $customerId)
-                    Text("Enter customer ID or scan customer's QR code")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-                
-                Section {
-                    Button(action: {
-                        if isFormValid {
-                            isUpdating = true
-                            onSell(customerId)
-                        } else {
-                            alertMessage = "Please enter a valid customer ID"
-                            showAlert = true
-                        }
-                    }) {
-                        if isUpdating {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            Text("Sell to Customer")
-                                .frame(maxWidth: .infinity)
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .disabled(isUpdating || !isFormValid)
-                    .listRowBackground(isFormValid ? Color.green : Color.gray)
-                }
-            }
-            .navigationTitle("Sell Medicine")
-            .navigationBarItems(trailing: Button("Cancel") {
-                presentationMode.wrappedValue.dismiss()
-            })
-            .disabled(isUpdating)
-        }
-    }
-    
-    private var isFormValid: Bool {
-        return customerId.count > 8 // Basic validation
-    }
-}
-
-struct ShopScannerView: View {
+struct TransportationScannerView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var blockchainService: BlockchainService
     @State private var isPresentingScanner = false
@@ -796,11 +605,11 @@ struct ShopScannerView: View {
                     .font(.system(size: 100))
                     .foregroundColor(.blue)
                 
-                Text("Verify Medicine")
+                Text("Scan Medicine QR Code")
                     .font(.title2)
                     .fontWeight(.bold)
                 
-                Text("Scan a QR code to verify medicine authenticity and add it to your inventory")
+                Text("Scan a QR code to view medicine details and update delivery status")
                     .font(.subheadline)
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)
@@ -861,7 +670,7 @@ struct ShopScannerView: View {
             }
             .sheet(isPresented: $showingMedicineDetail) {
                 if let medicine = scannedMedicine {
-                    ShopMedicineDetailView(block: medicine)
+                    TransportationDeliveryDetailView(block: medicine)
                         .environmentObject(authService)
                         .environmentObject(blockchainService)
                 }
@@ -888,33 +697,53 @@ struct ShopScannerView: View {
     }
 }
 
-struct ShopProfileView: View {
+struct StatCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 24))
+                .foregroundColor(color)
+            
+            Text(value)
+                .font(.title2)
+                .fontWeight(.bold)
+            
+            Text(title)
+                .font(.caption)
+                .foregroundColor(.gray)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
+        .background(Color.white)
+        .cornerRadius(10)
+        .shadow(color: Color.black.opacity(0.05), radius: 5, x: 0, y: 2)
+    }
+}
+
+struct TransportationProfileView: View {
     @EnvironmentObject var authService: AuthService
     
     var body: some View {
         NavigationView {
             List {
-                Section(header: Text("Account Information")) {
+                Section(header: Text("Account")) {
                     HStack {
-                        Image(systemName: "bag.fill")
+                        Image(systemName: "person.circle.fill")
                             .font(.system(size: 60))
                             .foregroundColor(.blue)
                         
                         VStack(alignment: .leading) {
-                            Text(authService.user?.fullName ?? "Shop")
+                            Text(authService.user?.fullName ?? "User")
                                 .font(.headline)
                             
                             Text(authService.user?.email ?? "")
                                 .font(.subheadline)
                                 .foregroundColor(.gray)
-                            
-                            Text("Shop Owner")
-                                .font(.caption)
-                                .foregroundColor(.blue)
-                                .padding(.vertical, 2)
-                                .padding(.horizontal, 8)
-                                .background(Color.blue.opacity(0.1))
-                                .cornerRadius(4)
                         }
                         .padding(.leading, 10)
                     }
@@ -922,16 +751,16 @@ struct ShopProfileView: View {
                 }
                 
                 Section(header: Text("Settings")) {
-                    NavigationLink(destination: Text("Shop Information")) {
-                        Label("Shop Information", systemImage: "building")
+                    NavigationLink(destination: VehicleInformationView()) {
+                        Label("Vehicle Information", systemImage: "car.fill")
                     }
                     
-                    NavigationLink(destination: Text("Security")) {
-                        Label("Security", systemImage: "lock.fill")
+                    NavigationLink(destination: Text("Delivery Preferences")) {
+                        Label("Delivery Preferences", systemImage: "gear")
                     }
                     
-                    NavigationLink(destination: Text("Preferences")) {
-                        Label("Preferences", systemImage: "gear")
+                    NavigationLink(destination: Text("Payment Methods")) {
+                        Label("Payment Methods", systemImage: "creditcard.fill")
                     }
                 }
                 
@@ -951,6 +780,7 @@ struct ShopProfileView: View {
                             try authService.signOut()
                         } catch {
                             print("Error signing out: \(error.localizedDescription)")
+                            // You could add an alert here to show the error to the user
                         }
                     }) {
                         HStack {
@@ -967,27 +797,39 @@ struct ShopProfileView: View {
     }
 }
 
-struct DetailRow: View {
-    let label: String
-    let value: String
+struct VehicleInformationView: View {
+    @State private var vehicleType = ""
+    @State private var licensePlate = ""
+    @State private var vehicleModel = ""
+    @State private var vehicleYear = ""
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(.caption)
-                .foregroundColor(.gray)
+        Form {
+            Section(header: Text("Vehicle Details")) {
+                TextField("Vehicle Type", text: $vehicleType)
+                TextField("License Plate", text: $licensePlate)
+                TextField("Model", text: $vehicleModel)
+                TextField("Year", text: $vehicleYear)
+            }
             
-            Text(value)
-                .font(.body)
+            Section {
+                Button(action: {
+                    // Save vehicle information to database
+                }) {
+                    Text("Save Information")
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(.white)
+                }
+                .listRowBackground(Color.blue)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .navigationTitle("Vehicle Information")
     }
 }
 
-struct ShopOwnerDashboard_Previews: PreviewProvider {
+struct TransportationDashboard_Previews: PreviewProvider {
     static var previews: some View {
-        ShopOwnerDashboard()
+        TransportationDashboard()
             .environmentObject(AuthService())
-            .environmentObject(BlockchainService())
     }
 } 
