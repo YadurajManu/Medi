@@ -32,7 +32,7 @@ Medi is a **cutting-edge iOS application** poised to **revolutionize the medical
 
 1.  **Clone the Repository:**
     ```bash
-    git clone https://github.com/your-username/Medi.git
+    git clone https://github.com/yadurajmanu/Medi.git
     cd Medi
     ```
 2.  **Install Dependencies:**
@@ -86,16 +86,6 @@ Package.swift          # Swift Package Manager dependencies
 ```
 
 ---
-## 🎨 App Showcase (Coming Soon!) 🖼️
-
-_Imagine vibrant screenshots and dynamic GIFs here, demonstrating Medi in action! We're working on bringing these visuals to you._
-
----
-## 🏅 Project Badges (On the Horizon!) 🛡️
-
-_Look out for shiny badges here soon, indicating build status, license compatibility, Swift version, and more!_
-
----
 ## 🤝 Contributing
 
 Contributions are welcome! If you have suggestions or want to improve Medi, please feel free to:
@@ -107,12 +97,6 @@ Contributions are welcome! If you have suggestions or want to improve Medi, plea
 5.  Open a Pull Request.
 
 ---
-## 📄 License
-
-This project is licensed under the MIT License - see the `LICENSE` file for details (assuming MIT, will need to create this file if it doesn't exist or confirm if another license is preferred).
-
----
-
 _Medi - Your Health, Secured and Transparent._
 
 ---
